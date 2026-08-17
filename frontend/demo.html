@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<!--
+AutoResearch 前端演示页（原生 JS + SSE，无需构建）
+用法：
+  1. 启动后端：uvicorn main:app --port 8000（或 docker compose up）
+  2. 打开本页：python -m http.server 8080 --directory frontend，访问 http://localhost:8080/demo.html
+     （页面在 8080，后端在 8000，下方 API_BASE 指向后端）
+  3. 或直接把本文件拖入浏览器（后端需开启 CORS，main.py 已放开）
+功能：开始调研 → SSE 实时日志 → 大纲/草稿人工确认 → 展示最终报告 → 历史报告回看与导出
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoResearch · 多 Agent 市场调研</title>
+<style>
+  :root {
+    --bg: #f6f7fb;
+    --surface: #ffffff;
+    --border: #e7eaf0;
+    --border-strong: #d3d8e2;
+    --text: #1a2233;
+    --text-2: #5c6778;
+    --text-3: #8b93a5;
+    --brand: #4f46e5;
+    --brand-hover: #4338ca;
+    --brand-soft: #eef2ff;
+    --grad: linear-gradient(135deg, #6366f1, #8b5cf6);
+    --green: #16a34a;
+    --green-hover: #15803d;
+    --green-soft: #f0fdf4;
+    --red: #dc2626;
+    --red-soft: #fef2f2;
+    --amber: #b45309;
+    --amber-soft: #fef3c7;
+    --radius: 14px;
+    --shadow: 0 1px 2px rgba(22, 31, 56, .05), 0 8px 24px -12px rgba(22, 31, 56, .12);
+    --shadow-lift: 0 2px 4px rgba(22, 31, 56, .06), 0 16px 32px -14px rgba(79, 70, 229, .28);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    max-width: 1220px;
+    margin: 0 auto;
+    padding: 28px 24px 48px;
+    background:
+      radial-gradient(1000px 420px at 15% -10%, rgba(99, 102, 241, .10), transparent 60%),
+      radial-gradient(900px 400px at 100% -10%, rgba(139, 92, 246, .10), transparent 55%),
+      var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- 页头 ---------- */
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  .brand-mark {
+    width: 46px;
+    height: 46px;
+    border-radius: 13px;
+    background: var(--grad);
+    color: #fff;
+    font-size: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 6px 16px rgba(99, 102, 241, .35);
+  }
+  .brand-text h1 {
+    font-size: 21px;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: .2px;
+    color: #0f172a;
+  }
+  .brand-text .subtitle {
+    margin: 1px 0 0;
+    font-size: 13px;
+    color: var(--text-2);
+  }
+  .brand-badge {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--brand);
+    background: var(--brand-soft);
+    border: 1px solid #e0e7ff;
+    padding: 4px 12px;
+    border-radius: 999px;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+
+  /* ---------- 布局：主区 + 右侧历史栏 ---------- */
+  .layout { display: flex; gap: 20px; align-items: flex-start; }
+  .main { flex: 1; min-width: 0; }
+  .sidebar {
+    width: 300px;
+    flex-shrink: 0;
+    position: sticky;
+    top: 20px;
+    background: rgba(255, 255, 255, .72);
+    backdrop-filter: blur(6px);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 16px;
+  }
+
+  /* ---------- 历史报告栏 ---------- */
+  .side-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 12px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .side-head h2 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0;
+    color: #0f172a;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .side-head h2::before { content: '🕘'; font-size: 13px; }
+  .link-btn {
+    border: none;
+    background: none;
+    color: var(--brand);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 3px 9px;
+    border-radius: 7px;
+    font-weight: 500;
+  }
+  .link-btn:hover { background: var(--brand-soft); }
+  #history-list { max-height: calc(100vh - 280px); overflow-y: auto; margin-right: -4px; padding-right: 4px; }
+  #history-list::-webkit-scrollbar { width: 6px; }
+  #history-list::-webkit-scrollbar-thumb { background: #d6dae4; border-radius: 3px; }
+  .history-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 12px;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    margin-bottom: 9px;
+    cursor: pointer;
+    background: var(--surface);
+    transition: border-color .15s, box-shadow .15s, transform .12s;
+  }
+  .history-item:hover {
+    border-color: #c7ccf7;
+    box-shadow: var(--shadow-lift);
+    transform: translateY(-1px);
+  }
+  .history-item-main { flex: 1; min-width: 0; }
+  .history-item-topic {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .history-item-meta { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
+  .history-del {
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 4px;
+    border-radius: 6px;
+    opacity: .4;
+    flex-shrink: 0;
+    transition: opacity .15s, background .15s;
+  }
+  .history-item:hover .history-del { opacity: 1; }
+  .history-del:hover { background: var(--red-soft); opacity: 1; }
+  .status-badge {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .status-running     { color: var(--brand); background: var(--brand-soft); }
+  .status-completed   { color: var(--green); background: var(--green-soft); }
+  .status-failed      { color: var(--red);   background: var(--red-soft); }
+  .status-interrupted { color: var(--amber); background: var(--amber-soft); }
+
+  /* ---------- 卡片 ---------- */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding-bottom: 12px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .card-header h2 {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0;
+    color: #0f172a;
+  }
+  .card-header .hint { font-size: 12px; color: var(--text-3); }
+  .hidden { display: none !important; }
+  .placeholder { color: var(--text-3); padding: 8px 2px; font-size: 13px; }
+
+  /* ---------- 开始调研（hero 卡片，位于日志上方） ---------- */
+  .hero-card {
+    background: linear-gradient(135deg, #ffffff, #f4f5ff);
+    border: 1px solid #e4e7ff;
+    padding: 22px 22px 20px;
+  }
+  .hero-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #0f172a;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .hero-title::before { content: '🧭'; }
+  .search-row { display: flex; gap: 10px; }
+  #topic {
+    flex: 1;
+    height: 46px;
+    padding: 0 16px;
+    font-size: 14px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1.5px solid var(--border-strong);
+    border-radius: 11px;
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  #topic::placeholder { color: var(--text-3); }
+  #topic:focus {
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3.5px rgba(99, 102, 241, .16);
+  }
+
+  /* ---------- 按钮 ---------- */
+  .btn {
+    height: 44px;
+    padding: 0 20px;
+    font-size: 14px;
+    font-weight: 600;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: transform .12s, box-shadow .15s, background-color .15s, border-color .15s, color .15s;
+    white-space: nowrap;
+  }
+  .btn:active:not(:disabled) { transform: translateY(1px); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-primary {
+    background: var(--grad);
+    color: #fff;
+    box-shadow: 0 6px 14px -4px rgba(99, 102, 241, .5);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: linear-gradient(135deg, #5559ee, #7c3aed);
+    box-shadow: 0 8px 18px -4px rgba(99, 102, 241, .6);
+  }
+  .btn-approve {
+    background: var(--green);
+    color: #fff;
+    box-shadow: 0 5px 12px -4px rgba(22, 163, 74, .5);
+  }
+  .btn-approve:hover:not(:disabled) { background: var(--green-hover); }
+  .btn-reject {
+    background: var(--surface);
+    color: var(--red);
+    border: 1px solid #f3c1c1;
+  }
+  .btn-reject:hover:not(:disabled) { background: var(--red-soft); border-color: var(--red); }
+  .btn-ghost {
+    background: var(--surface);
+    color: var(--text-2);
+    border: 1px solid var(--border-strong);
+    height: 36px;
+    padding: 0 14px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .btn-ghost:hover:not(:disabled) { color: var(--brand); border-color: var(--brand); }
+  .btn-ghost:disabled { color: var(--text-3); }
+  .btn-sm { height: 32px; padding: 0 12px; font-size: 12.5px; }
+
+  /* ---------- 执行日志 ---------- */
+  #log {
+    max-height: 320px;
+    overflow-y: auto;
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    background: #fafbfe;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px 0;
+  }
+  #log::-webkit-scrollbar { width: 6px; }
+  #log::-webkit-scrollbar-thumb { background: #d6dae4; border-radius: 3px; }
+  #log .placeholder { padding: 10px 14px; }
+  .log-line {
+    display: flex;
+    gap: 10px;
+    padding: 5px 14px;
+    border-bottom: 1px solid #f1f3f8;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .log-line:last-child { border-bottom: none; }
+  .log-ts {
+    color: var(--text-3);
+    font-size: 11.5px;
+    flex-shrink: 0;
+    min-width: 62px;
+    padding-top: 1px;
+  }
+  .log-start { color: var(--brand); font-weight: 600; }
+  .log-done  { color: var(--green); font-weight: 600; }
+  .log-error { color: var(--red);   font-weight: 600; }
+  .log-user  { color: #0f172a; font-weight: 600; }
+  .log-info  { color: var(--text-2); }
+  .log-stream { color: #6b7280; font-style: italic; }
+
+  /* ---------- 确认面板 ---------- */
+  #review-content, #report-content, #history-report-content {
+    background: #fafbfe;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    max-height: 380px;
+    overflow-y: auto;
+    font-size: 13.5px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  #review-content { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+
+  #review-feedback {
+    width: 100%;
+    height: 78px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    font-size: 13.5px;
+    font-family: inherit;
+    color: var(--text);
+    background: var(--surface);
+    border: 1.5px solid var(--border-strong);
+    border-radius: 10px;
+    resize: vertical;
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  #review-feedback:focus {
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3.5px rgba(99, 102, 241, .14);
+  }
+  .btn-row { display: flex; gap: 10px; margin-top: 12px; }
+
+  .export-row {
+    align-items: center;
+    padding-top: 12px;
+    margin-top: 12px;
+    border-top: 1px dashed var(--border);
+  }
+  .export-label { font-size: 13px; color: var(--text-2); margin-right: 2px; }
+
+  /* ---------- 历史详情：元信息 + 批改意见时间线 ---------- */
+  .history-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-2);
+    background: #f6f7fb;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+  }
+  .history-meta .topic { font-weight: 600; color: var(--text); }
+  .history-meta .dot { color: var(--text-3); }
+  .fb-item { position: relative; padding: 2px 0 2px 22px; margin-bottom: 14px; }
+  .fb-item::before {
+    content: '';
+    position: absolute;
+    left: 5px;
+    top: 16px;
+    bottom: -16px;
+    width: 2px;
+    background: var(--border);
+  }
+  .fb-item:last-child { margin-bottom: 2px; }
+  .fb-item:last-child::before { bottom: auto; height: 0; }
+  .fb-item::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 15px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #fff;
+    border: 2.5px solid var(--border);
+  }
+  .fb-item.fb-ok::after  { border-color: var(--green); }
+  .fb-item.fb-rej::after { border-color: var(--red); }
+  .fb-head { display: flex; gap: 10px; align-items: center; }
+  .fb-badge {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 9px;
+    border-radius: 7px;
+  }
+  .fb-ok  { color: var(--green); }
+  .fb-rej { color: var(--red); }
+  .fb-badge.fb-ok  { background: var(--green-soft); }
+  .fb-badge.fb-rej { background: var(--red-soft); }
+  .fb-action { font-weight: 600; font-size: 13px; }
+  .fb-time { font-size: 11.5px; color: var(--text-3); }
+  .fb-text {
+    margin-top: 7px;
+    font-size: 13px;
+    color: var(--text);
+    background: #fafbfe;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 9px 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .history-report-title { margin: 20px 0 8px; font-size: 14px; font-weight: 600; color: #0f172a; }
+
+  /* ---------- Markdown 渲染 ---------- */
+  #report-content h2, #history-report-content h2 {
+    font-size: 17px;
+    color: #0f172a;
+    margin: 1em 0 .4em;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  #report-content h2:first-child, #history-report-content h2:first-child { margin-top: 0; }
+  #report-content h3, #history-report-content h3 { font-size: 15px; margin: .9em 0 .3em; color: #1f2937; }
+  #report-content h4, #history-report-content h4 { font-size: 14px; margin: .8em 0 .3em; color: #1f2937; }
+  #report-content p, #history-report-content p { margin: .5em 0; }
+  #report-content li, #history-report-content li { margin: 2px 0; padding-left: 2px; }
+  #report-content br, #history-report-content br { line-height: 1; }
+
+  /* ---------- 页脚 ---------- */
+  .footer {
+    margin-top: 12px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+</style>
+</head>
+<body>
+  <header class="brand">
+    <div class="brand-mark">🔍</div>
+    <div class="brand-text">
+      <h1>AutoResearch</h1>
+      <p class="subtitle">多 Agent 市场调研 · 大纲与草稿人工确认 · 最终报告</p>
+    </div>
+    <span class="brand-badge">Web Demo</span>
+  </header>
+
+  <div class="layout">
+    <main class="main">
+      <!-- 开始调研：位于执行日志上方 -->
+      <section class="card hero-card">
+        <div class="hero-title">开始一次新的调研</div>
+        <div class="search-row">
+          <input id="topic" placeholder="输入调研主题，如：2026年国内咖啡机市场机会"
+                 value="2026年国内咖啡机市场机会">
+          <button id="start" class="btn btn-primary">🚀 开始调研</button>
+        </div>
+      </section>
+
+      <section class="card" id="log-card">
+        <div class="card-header">
+          <h2>执行日志</h2>
+          <span class="hint">节点执行 / 人工介入 / 错误</span>
+        </div>
+        <div id="log">
+          <div class="placeholder">输入主题并点击「开始调研」，实时执行日志将显示在这里</div>
+        </div>
+      </section>
+
+      <section class="card hidden" id="review">
+        <div class="card-header">
+          <h2 id="review-title">待人工确认</h2>
+          <span class="hint">批准，或填写意见后打回</span>
+        </div>
+        <div id="review-content"></div>
+        <textarea id="review-feedback"
+                  placeholder="如需修改，请填写修改意见（选填）；批准可留空"></textarea>
+        <div class="btn-row">
+          <button id="approve" class="btn btn-approve">✓ 批准</button>
+          <button id="reject" class="btn btn-reject">↩ 打回修改</button>
+        </div>
+        <div class="btn-row export-row" id="outline-export-row" style="display:none">
+          <span class="export-label">导出大纲</span>
+          <button id="export-outline-md" class="btn btn-ghost">Markdown</button>
+          <button id="export-outline-docx" class="btn btn-ghost">Word</button>
+        </div>
+      </section>
+
+      <section class="card hidden" id="report">
+        <div class="card-header">
+          <h2>最终报告</h2>
+          <span class="hint">Markdown</span>
+        </div>
+        <div id="report-content"></div>
+        <div class="btn-row export-row">
+          <span class="export-label">导出报告</span>
+          <button id="export-report-md" class="btn btn-ghost">Markdown</button>
+          <button id="export-report-docx" class="btn btn-ghost">Word</button>
+        </div>
+      </section>
+
+      <section class="card hidden" id="history-view">
+        <div class="card-header">
+          <h2 id="history-title">历史报告</h2>
+          <button id="back-live" class="btn btn-ghost btn-sm">← 返回实时视图</button>
+        </div>
+        <div class="history-meta" id="history-meta"></div>
+        <div id="history-feedbacks"></div>
+        <div class="history-report-title">最终报告</div>
+        <div id="history-report-content"></div>
+        <div class="btn-row export-row">
+          <span class="export-label">导出历史报告</span>
+          <button id="export-history-md" class="btn btn-ghost">Markdown</button>
+          <button id="export-history-docx" class="btn btn-ghost">Word</button>
+        </div>
+      </section>
+    </main>
+
+    <aside class="sidebar">
+      <div class="side-head">
+        <h2>历史报告</h2>
+        <button id="refresh-history" class="link-btn">刷新</button>
+      </div>
+      <div id="history-list">
+        <div class="placeholder">暂无历史报告</div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="footer">AutoResearch · LangGraph 驱动的多 Agent 调研流程</footer>
+
+<script>
+  // ---- 后端 API 地址（前端页面端口 ≠ 后端端口时必须指向后端）----
+  const API_BASE = 'http://localhost:8000';
+
+  // ---- 状态 ----
+  let currentThread = null;
+  let currentReview = null;   // { type: 'plan' | 'draft', data: {...} }
+  let submitting = false;     // 防抖：防止重复点击批准/打回
+  let lastInterruptSeq = -1;  // 去重：只处理 seq 递增的新中断（兼容重连重放 + 打回后内容不变）
+  let finished = false;       // 去重：final 事件只处理一次
+  let streamNode = null;      // 当前流式输出的节点
+  let streamEl = null;        // 流式输出对应的日志行元素
+  let currentHistoryThread = null;  // 当前正在查看的历史 thread_id（导出用）
+  let sse = null;                   // 当前 SSE 连接（删除/重置时关闭，避免悬挂连接）
+  let reviewWasHidden = true;       // 进入历史详情前，确认面板的可见状态（返回时恢复）
+  let reportWasHidden = true;       // 进入历史详情前，报告面板的可见状态（返回时恢复）
+
+  const $ = (id) => document.getElementById(id);
+
+  // ---- 历史报告：状态与工具 ----
+  const STATUS_MAP = { running: '进行中', completed: '已完成', failed: '失败', interrupted: '中断' };
+  function fmtTime(ts) {
+    if (!ts) return '';
+    return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false });
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // 加载历史列表（侧边栏）
+  async function loadHistory() {
+    try {
+      const resp = await fetch(`${API_BASE}/research/history`);
+      if (!resp.ok) return;
+      const { history } = await resp.json();
+      const list = $('history-list');
+      list.innerHTML = '';
+      if (!history || !history.length) {
+        list.innerHTML = '<div class="placeholder">暂无历史报告</div>';
+        return;
+      }
+      for (const rec of history) {
+        const item = document.createElement('div');
+        item.className = 'history-item';
+        const nfb = (rec.feedbacks || []).length;
+        item.innerHTML = `
+          <div class="history-item-main">
+            <div class="history-item-topic">${escapeHtml(rec.topic)}</div>
+            <div class="history-item-meta">${fmtTime(rec.created_at)} · ${nfb} 条批改</div>
+          </div>
+          <span class="status-badge status-${rec.status}">${STATUS_MAP[rec.status] || rec.status}</span>
+          <button class="history-del" title="删除该历史">🗑</button>`;
+        item.onclick = () => showHistoryDetail(rec.thread_id);
+        item.querySelector('.history-del').onclick = (evt) => deleteHistory(rec.thread_id, evt);
+        list.appendChild(item);
+      }
+    } catch (err) { /* 历史列表加载失败不影响主流程 */ }
+  }
+
+  // 删除一条历史报告（历史记录 + checkpoint）
+  async function deleteHistory(threadId, evt) {
+    evt.stopPropagation(); // 避免触发历史详情
+    if (!confirm('确认删除该历史报告？此操作不可恢复。')) return;
+    try {
+      const resp = await fetch(`${API_BASE}/research/${threadId}`, { method: 'DELETE' });
+      if (!resp.ok) {
+        const detail = await resp.json().catch(() => null);
+        return alert(`删除失败(${resp.status})：${detail && detail.detail ? detail.detail : resp.statusText}`);
+      }
+      // 若正在查看该历史详情，返回实时视图
+      if (currentHistoryThread === threadId) backToLive();
+      if (localStorage.getItem('ar_thread_id') === threadId) localStorage.removeItem('ar_thread_id');
+      // 若删除的是当前实时连接的调研，关闭 SSE 并重置状态
+      if (currentThread === threadId) {
+        if (sse) { sse.close(); sse = null; }
+        currentThread = null;
+        finished = false;
+      }
+      loadHistory();
+    } catch (err) {
+      alert(`删除出错：${err.message}`);
+    }
+  }
+
+  // 中断恢复：刷新/重新打开页面后，自动恢复上次未完成的调研
+  async function tryRestore() {
+    const tid = localStorage.getItem('ar_thread_id');
+    if (!tid) return;
+    try {
+      const resp = await fetch(`${API_BASE}/research/${tid}/detail`);
+      if (!resp.ok) { localStorage.removeItem('ar_thread_id'); return; }
+      const rec = await resp.json();
+      if (rec.status === 'completed') { localStorage.removeItem('ar_thread_id'); return; } // 已完成的不打扰
+      currentThread = tid;
+      finished = false;
+      lastInterruptSeq = -1;
+      currentReview = null;
+      streamNode = null;
+      streamEl = null;
+      $('log').innerHTML = '';
+      appendLog('🔄 已恢复上次未完成的调研，正在补发历史事件…');
+      connectSSE(tid);
+    } catch (err) {
+      localStorage.removeItem('ar_thread_id');
+    }
+  }
+
+  // 点击历史条目：切换到历史详情视图（开始调研栏保持可见，可随时发起新调研）
+  function showHistoryDetail(threadId) {
+    reviewWasHidden = $('review').classList.contains('hidden');
+    reportWasHidden = $('report').classList.contains('hidden');
+    $('log-card').classList.add('hidden');
+    $('review').classList.add('hidden');
+    $('report').classList.add('hidden');
+    $('history-view').classList.remove('hidden');
+    currentHistoryThread = threadId;
+    (async () => {
+      try {
+        const resp = await fetch(`${API_BASE}/research/${threadId}/detail`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        renderHistoryDetail(await resp.json());
+      } catch (err) {
+        $('history-report-content').innerHTML =
+          `<p class="placeholder">加载失败：${escapeHtml(err.message)}</p>`;
+      }
+    })();
+  }
+
+  function renderHistoryDetail(rec) {
+    const st = STATUS_MAP[rec.status] || rec.status;
+    $('history-title').textContent = '历史报告';
+    $('history-meta').innerHTML =
+      `<span class="topic">${escapeHtml(rec.topic)}</span>` +
+      `<span class="dot">·</span><span>${st}</span>` +
+      `<span class="dot">·</span><span>创建于 ${fmtTime(rec.created_at)}</span>`;
+    renderFeedbacks(rec.feedbacks || []);
+    const rep = $('history-report-content');
+    rep.innerHTML = rec.final_report
+      ? renderMarkdown(rec.final_report)
+      : '<p class="placeholder">该调研尚未生成报告</p>';
+    // 无报告时禁用导出按钮
+    const canExport = !!rec.final_report;
+    $('export-history-md').disabled = !canExport;
+    $('export-history-docx').disabled = !canExport;
+    window.scrollTo({ top: 0 });
+  }
+
+  // 批改意见时间线：大纲/草稿 的 批准/打回 + 意见文本
+  function renderFeedbacks(feedbacks) {
+    const wrap = $('history-feedbacks');
+    wrap.innerHTML = '';
+    if (!feedbacks.length) {
+      wrap.innerHTML = '<div class="placeholder">本次调研无人工批改记录（各环节均直接批准）</div>';
+      return;
+    }
+    for (const fb of feedbacks) {
+      const stageName = fb.stage === 'plan' ? '大纲' : fb.stage === 'draft' ? '草稿' : fb.stage;
+      const cls = fb.approved ? 'fb-ok' : 'fb-rej';
+      const action = fb.approved ? '批准' : '打回修改';
+      const item = document.createElement('div');
+      item.className = `fb-item ${cls}`;
+      item.innerHTML = `
+        <div class="fb-head">
+          <span class="fb-badge ${cls}">${escapeHtml(stageName)}</span>
+          <span class="fb-action ${cls}">${action}</span>
+          <span class="fb-time">${fmtTime(fb.at)}</span>
+        </div>
+        ${fb.feedback ? `<div class="fb-text">${escapeHtml(fb.feedback)}</div>` : ''}`;
+      wrap.appendChild(item);
+    }
+  }
+
+  // 返回实时视图（恢复日志/确认/报告的原可见状态）
+  function backToLive() {
+    $('history-view').classList.add('hidden');
+    $('log-card').classList.remove('hidden');
+    if (!reviewWasHidden) $('review').classList.remove('hidden');
+    if (!reportWasHidden) $('report').classList.remove('hidden');
+  }
+
+  // ---- 日志 ----
+  // 按内容前缀着色（▶ 节点开始 / ✔ 完成 / ✖ 错误 / > 🚀 用户操作），并附带时间戳
+  function logKind(text) {
+    const t = String(text).trim();
+    if (t.startsWith('▶')) return 'start';
+    if (t.startsWith('✔') || t.startsWith('🏁')) return 'done';
+    if (t.startsWith('✖')) return 'error';
+    if (t.startsWith('>') || t.startsWith('🚀')) return 'user';
+    return 'info';
+  }
+  function appendLog(text) {
+    const div = document.createElement('div');
+    div.className = 'log-line log-' + logKind(text);
+    const ts = document.createElement('span');
+    ts.className = 'log-ts';
+    ts.textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    const body = document.createElement('span');
+    body.textContent = text;
+    div.appendChild(ts);
+    div.appendChild(body);
+    $('log').appendChild(div);
+    $('log').scrollTop = $('log').scrollHeight;
+  }
+
+  // ---- 流式输出：打字机效果，按节点累积到同一行 ----
+  function appendStream(node, text) {
+    if (streamNode !== node) { streamNode = node; streamEl = null; }
+    if (!streamEl) {
+      streamEl = document.createElement('div');
+      streamEl.className = 'log-line log-stream';
+      const ts = document.createElement('span');
+      ts.className = 'log-ts';
+      ts.textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+      const body = document.createElement('span');
+      body.textContent = '';
+      streamEl.appendChild(ts);
+      streamEl.appendChild(body);
+      $('log').appendChild(streamEl);
+    }
+    streamEl.lastChild.textContent += text;
+    $('log').scrollTop = $('log').scrollHeight;
+  }
+
+  // ---- 简单 Markdown 渲染（# 标题 / - 列表 / 表格行）----
+  function renderMarkdown(md) {
+    const esc = md.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    let html = '';
+    for (const line of esc.split('\n')) {
+      if (line.startsWith('# ')) html += `<h2>${line.slice(2)}</h2>`;
+      else if (line.startsWith('## ')) html += `<h3>${line.slice(3)}</h3>`;
+      else if (line.startsWith('### ')) html += `<h4>${line.slice(4)}</h4>`;
+      else if (line.startsWith('- ')) html += `<li>• ${line.slice(2)}</li>`;
+      else if (line.trim() === '') html += '<br>';
+      else html += `<p>${line}</p>`;
+    }
+    return html;
+  }
+
+  // ---- 人工确认面板 ----
+  function showReview(type, data, seq) {
+    if (seq <= lastInterruptSeq) return; // 重连重放旧中断(seq 较小)，忽略
+    lastInterruptSeq = seq;
+    currentReview = { type, data };
+    $('review').classList.remove('hidden');
+    // 大纲导出按钮仅在大纲确认阶段显示（草稿确认时不提供大纲导出）
+    $('outline-export-row').style.display = (type === 'plan') ? 'flex' : 'none';
+    if (type === 'plan') {
+      $('review-title').textContent = '请确认调研大纲';
+      $('review-content').textContent = JSON.stringify(data.outline, null, 2);
+    } else if (type === 'draft') {
+      $('review-title').textContent = '请审核报告草稿';
+      $('review-content').textContent = data.report;
+    }
+  }
+
+  async function submitFeedback(approved) {
+    if (submitting) return; // 防抖：请求未返回前忽略重复点击
+    submitting = true;
+    $('approve').disabled = true;
+    $('reject').disabled = true;
+    try {
+      const feedback = $('review-feedback').value.trim();
+      const body = { approved, feedback: feedback || null };
+      // 把当前确认的大纲/草稿写回，保证恢复后内容一致
+      if (currentReview && currentReview.type === 'plan') body.outline = currentReview.data.outline;
+      if (currentReview && currentReview.type === 'draft') body.draft = currentReview.data.report;
+      $('review').classList.add('hidden');
+      $('review-feedback').value = '';
+      const resp = await fetch(`${API_BASE}/research/${currentThread}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) {
+        const detail = await resp.json().catch(() => null);
+        appendLog(`✖ 提交失败(${resp.status})：${detail && detail.detail ? detail.detail : resp.statusText}`);
+        return; // 失败则保留面板现场，等待下次操作
+      }
+      appendLog(`> 已提交：${approved ? '批准' : '打回修改'}${feedback ? '（' + feedback + '）' : ''}`);
+    } catch (err) {
+      appendLog(`✖ 提交出错：${err.message}`);
+    } finally {
+      submitting = false;
+      $('approve').disabled = false;
+      $('reject').disabled = false;
+    }
+  }
+
+  // ---- SSE 消费 ----
+  function connectSSE(threadId) {
+    const es = new EventSource(`${API_BASE}/research/${threadId}/stream`);
+    sse = es;
+    es.onmessage = (e) => {
+      const evt = JSON.parse(e.data);
+      switch (evt.event) {
+        case 'node_start':
+          streamNode = null; streamEl = null;
+          appendLog(`▶ ${evt.node} 开始执行`);
+          break;
+        case 'node_end':
+          streamNode = null; streamEl = null;
+          appendLog(`✔ ${evt.node} 完成`);
+          break;
+        case 'stream':
+          appendStream(evt.node, evt.data.text);
+          break;
+        case 'interrupt':
+          streamNode = null; streamEl = null;
+          showReview(evt.data.type, evt.data, evt.seq);
+          break;
+        case 'final':
+          if (finished) return; // 断线重连重放 final，忽略重复
+          streamNode = null; streamEl = null;
+          finished = true;
+          appendLog('🏁 调研完成，报告已生成');
+          $('report').classList.remove('hidden');
+          $('report-content').innerHTML = renderMarkdown(evt.data.final_report);
+          loadHistory(); // 历史列表标记为已完成
+          es.close();
+          break;
+        case 'error':
+          streamNode = null; streamEl = null;
+          appendLog(`✖ 错误: ${evt.data.error}`);
+          loadHistory(); // 历史列表标记为失败
+          break;
+      }
+    };
+    es.onerror = () => { /* 断线自动重连（EventSource 内建） */ };
+  }
+
+  // ---- 开始调研 ----
+  $('start').onclick = async () => {
+    const topic = $('topic').value.trim();
+    if (!topic) return alert('请输入调研主题');
+    const r = await fetch(`${API_BASE}/research/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic }),
+    });
+    if (!r.ok) {
+      const detail = await r.json().catch(() => null);
+      return alert(`启动失败(${r.status})：${detail && detail.detail ? detail.detail : r.statusText}`);
+    }
+    const { thread_id } = await r.json();
+    localStorage.setItem('ar_thread_id', thread_id); // 记住当前调研，供中断恢复
+    // 发起新调研时自动切回实时视图（若正在查看历史详情）
+    $('history-view').classList.add('hidden');
+    $('log-card').classList.remove('hidden');
+    $('review').classList.add('hidden');
+    currentThread = thread_id;
+    finished = false;
+    lastInterruptSeq = -1;
+    currentReview = null;
+    streamNode = null;
+    streamEl = null;
+    $('log').innerHTML = '';
+    $('report').classList.add('hidden');
+    if (sse) { sse.close(); sse = null; } // 关闭旧的 SSE 连接
+    appendLog(`🚀 已启动调研：${topic}\n   thread_id = ${thread_id}`);
+    connectSSE(thread_id);
+    loadHistory(); // 新调研进入历史列表（状态：进行中）
+  };
+
+  // ---- 导出下载（大纲 / 报告 / 历史报告 → Markdown / Word）----
+  async function downloadExport(kind, format) {
+    if (!currentThread) return alert('请先开始调研');
+    const ext = format === 'docx' ? 'docx' : 'md';
+    try {
+      const resp = await fetch(`${API_BASE}/research/${currentThread}/${kind}/export?format=${format}`);
+      if (!resp.ok) {
+        const detail = await resp.json().catch(() => null);
+        return alert(`导出失败(${resp.status})：${detail && detail.detail ? detail.detail : resp.statusText}`);
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${currentThread}-${kind}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`导出出错：${err.message}`);
+    }
+  }
+
+  async function downloadHistoryExport(format) {
+    if (!currentHistoryThread) return;
+    const ext = format === 'docx' ? 'docx' : 'md';
+    try {
+      const resp = await fetch(`${API_BASE}/research/${currentHistoryThread}/history/export?format=${format}`);
+      if (!resp.ok) {
+        const detail = await resp.json().catch(() => null);
+        return alert(`导出失败(${resp.status})：${detail && detail.detail ? detail.detail : resp.statusText}`);
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${currentHistoryThread}-history-report.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`导出出错：${err.message}`);
+    }
+  }
+
+  $('approve').onclick = () => submitFeedback(true);
+  $('reject').onclick = () => submitFeedback(false);
+  $('export-outline-md').onclick  = () => downloadExport('outline', 'markdown');
+  $('export-outline-docx').onclick = () => downloadExport('outline', 'docx');
+  $('export-report-md').onclick   = () => downloadExport('report', 'markdown');
+  $('export-report-docx').onclick  = () => downloadExport('report', 'docx');
+  $('export-history-md').onclick  = () => downloadHistoryExport('markdown');
+  $('export-history-docx').onclick = () => downloadHistoryExport('docx');
+  $('refresh-history').onclick = () => loadHistory();
+  $('back-live').onclick = () => backToLive();
+  loadHistory(); // 页面加载时拉取一次历史列表
+  tryRestore();  // 页面加载时尝试恢复上次未完成的调研
+</script>
+</body>
+</html>

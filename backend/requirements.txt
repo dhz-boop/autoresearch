@@ -1,0 +1,38 @@
+# ============================================================
+# AutoResearch 后端依赖（版本与本地测试环境锁定一致）
+# 说明：不使用已停维护的 langchain-experimental / langchain-community，
+#       Python REPL 用标准库实现，Tavily 用官方包 tavily-python。
+# ============================================================
+
+# --- LLM 应用框架 ---
+langgraph==1.2.10
+langchain-core==1.5.3
+langchain-openai==1.4.2
+
+# --- 结构化数据与配置 ---
+pydantic==2.13.4
+pydantic-settings==2.15.0
+python-dotenv==1.2.2
+
+# --- 工具 ---
+tavily-python==0.7.27
+
+# --- Web 服务 ---
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+sse-starlette==3.4.8
+
+# --- 导出（大纲/报告 → Markdown / Word）---
+python-docx==1.2.0
+
+# --- LangGraph 持久化 ---
+aiosqlite==0.22.1
+langgraph-checkpoint-sqlite==3.1.1
+
+# --- PostgreSQL 持久化（生产，CHECKPOINTER=postgres 时使用）---
+langgraph-checkpoint-postgres==3.1.2
+psycopg[binary]==3.3.4
+psycopg-pool==3.3.1
+
+# --- 可观测性（可选，用于 LangSmith 追踪）---
+langsmith==0.10.17

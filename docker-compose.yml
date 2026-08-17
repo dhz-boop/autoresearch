@@ -1,0 +1,52 @@
+# ============================================================
+# AutoResearch 生产编排：PostgreSQL 持久化 + FastAPI 后端
+# 使用：docker compose up --build
+# 说明：密钥从项目根 .env 读取（compose 自动加载），或本文件显式覆盖。
+# ============================================================
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: autoresearch
+      POSTGRES_PASSWORD: autoresearch
+      POSTGRES_DB: autoresearch
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autoresearch -d autoresearch"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # 生产使用 PostgreSQL Checkpointer
+      CHECKPOINTER: postgres
+      DATABASE_URL: postgresql://autoresearch:autoresearch@postgres:5432/autoresearch
+
+      # LLM 提供方与密钥（从 .env 读取）
+      LLM_PROVIDER: ${LLM_PROVIDER:-deepseek}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
+      SILICONFLOW_MODEL: ${SILICONFLOW_MODEL:-deepseek-ai/DeepSeek-V3.2}
+
+      # Tavily 搜索（可选）
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      TAVILY_MAX_RESULTS: ${TAVILY_MAX_RESULTS:-5}
+
+      # 可观测性（可选）
+      LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
+      LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY:-}
+      LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-AutoResearch}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

@@ -1,0 +1,4 @@
+# 开发/测试依赖
+-r backend/requirements.txt
+
+pytest==9.1.1

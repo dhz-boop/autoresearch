@@ -1,0 +1,24 @@
+# 虚拟环境
+.venv/
+venv/
+
+# 密钥与本地数据（绝不可进入镜像）
+.env
+data/
+*.sqlite*
+*.db
+
+# 测试与文档（镜像只需 backend）
+tests/
+docs/
+frontend/
+pytest.ini
+requirements-dev.txt
+
+# 版本控制与系统
+.git/
+.gitignore
+.DS_Store
+__pycache__/
+*.pyc
+.pytest_cache/
